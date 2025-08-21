@@ -55,18 +55,23 @@ DISCORD_MODLIST_FILE = "/tmp/discord_modlist.txt"
 LOCAL_MODINFO_FILE = "/tmp/modInfos.json"
 DEFAULT_WORKSHOP_URL = "https://steamcommunity.com/sharedfiles/filedetails/?id="
 
-
 # Configure logging with RotatingFileHandler and console output, filename corresponds to script name
 script_name = os.path.splitext(os.path.basename(__file__))[0]
 log_file = f'/tmp/log.{script_name}'
+# Handler for writing WARNING and above messages to a rotating log file
 log_handler = RotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
+log_handler.setLevel(logging.WARNING)  # Only WARNING and higher levels
+log_format = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+log_handler.setFormatter(log_format)
+# Handler for printing INFO and above messages to the console
 console_handler = logging.StreamHandler()
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[log_handler, console_handler]
-)
+console_handler.setLevel(logging.INFO)  # INFO and higher levels
+console_handler.setFormatter(log_format)
+# Configure the logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Receive all messages, filtering is done by handlers
+logger.addHandler(log_handler)
+logger.addHandler(console_handler)
 
 # PID file to prevent multiple executions
 PID_FILE = f'/tmp/pid.{script_name}'
@@ -113,7 +118,7 @@ def remove_pid():
 
 
 def send_rcon_message(rcon: object, message: str, test_mode: Optional[bool]=False) -> None:
-    """Send a server message, appending '(TEST)' if in test mode. Spaces are replaced with underscores for compatibility."""
+    """Send a server message, appending '(TEST)' if in test mode."""
     try:
         if test_mode:
             message += " (TEST)"
@@ -121,6 +126,12 @@ def send_rcon_message(rcon: object, message: str, test_mode: Optional[bool]=Fals
         command = rcon.command(f"servermsg \"{message}\"")
     except Exception as e:
         logger.error(f"Error sending server message: {e}")
+
+
+async def send_manual_message(message: str) -> None:
+    """Send a manual message to all players."""
+    rcon = ZomboidRCONient(ip=RCON_HOST, port=RCON_PORT, password=RCON_PASSWORD)
+    send_rcon_message(rcon, message)
 
 
 def get_connected_players(rcon) -> List[str] | None:
@@ -134,11 +145,10 @@ def get_connected_players(rcon) -> List[str] | None:
     return players
 
 
-def kick_all_players(rcon) -> None:
+def kick_all_players(rcon, players: List[str]) -> None:
     """Kick all connected players."""
     logger.info("Kicking all players before restart...")
     try:
-        players = get_connected_players(rcon)
         for player in players:
             logger.info(f"Kicking player: {player}")
             rcon.command(f"kickuser {player}")
@@ -146,14 +156,13 @@ def kick_all_players(rcon) -> None:
         logger.error(f"Error while kicking players: {e}")
 
 
-async def send_manual_message(message: str) -> None:
-    """Send a manual message to all players."""
-    rcon = ZomboidRCONient(ip=RCON_HOST, port=RCON_PORT, password=RCON_PASSWORD)
-    send_rcon_message(rcon, message)
-
-
 async def warn_and_restart(test_mode: bool) -> None:
     """Warn players and restart the server."""
+    async def saveAndQuit(rcon):
+        logger.info("Saving world and quit.")
+        rcon.command("save")
+        await asyncio.sleep(RESTART_TIMEOUT)
+        rcon.command("quit")
     try:
         rcon = ZomboidRCON(ip=RCON_HOST, port=RCON_PORT, password=RCON_PASSWORD)
         # Get connected players and restart without countdown if theres non
@@ -165,21 +174,29 @@ async def warn_and_restart(test_mode: bool) -> None:
             rcon.command("quit")
         else:
             # Countdown warnings
+            _playersGone = False
             logger.info("Countdown for Server Restart...")
             for minutes_left in range(5, 0, -1):
                 send_rcon_message(rcon, WARNING_MESSAGE.format(minutes=minutes_left), test_mode)
                 await asyncio.sleep(60)
-            # Send restart message
-            send_rcon_message(rcon, RESTART_MESSAGE.format(seconds=RESTART_TIMEOUT), test_mode)
-            if not test_mode:
-                # Kick players, save world, and restart
-                kick_all_players(rcon)
-                await asyncio.sleep(2)
-                logger.info("Saving world before quit.")
-                rcon.command("save")
-                await asyncio.sleep(RESTART_TIMEOUT)
-                logger.info("Quit.")
-                rcon.command("quit")
+                players = get_connected_players(rcon)
+                if not players:
+                    logger.info("No players left. Saving world and then quit.")
+                    _playersGone = True
+                    break
+            if not _playersGone:
+                # Send restart message
+                send_rcon_message(rcon, RESTART_MESSAGE.format(seconds=RESTART_TIMEOUT*2), test_mode)
+                if not test_mode:
+                    # Kick players, save world, and quit
+                    await asyncio.sleep(RESTART_TIMEOUT*2)
+                    players = get_connected_players(rcon)
+                    if players:
+                        kick_all_players(rcon, players)
+                        await asyncio.sleep(2)
+                    saveAndQuit(rcon)
+            elif not test_mode:
+                saveAndQuit(rcon)
     except Exception as e:
         logger.error(f"Error during restart: {e}")
 
