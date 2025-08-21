@@ -168,8 +168,8 @@ async def warn_and_restart(test_mode: bool) -> None:
         # Get connected players and restart without countdown if theres non
         players = get_connected_players(rcon)
         if len(players) == 0 and not test_mode:
-            logger.info("No players online. Saving world and quit.")
-            saveAndQuit(rcon)
+            logger.warning("No players online. Saving world and quit.")
+            await saveAndQuit(rcon)
         else:
             # Countdown warnings
             _playersGone = False
@@ -179,7 +179,7 @@ async def warn_and_restart(test_mode: bool) -> None:
                 await asyncio.sleep(60)
                 players = get_connected_players(rcon)
                 if not players:
-                    logger.info("No players left. Saving world and quit.")
+                    logger.warning("No players left. Saving world and quit.")
                     _playersGone = True
                     break
             if not _playersGone:
@@ -192,10 +192,10 @@ async def warn_and_restart(test_mode: bool) -> None:
                         kick_all_players(rcon, players)
                         await asyncio.sleep(2)
                     logger.info("Saving world and quit.")
-                    saveAndQuit(rcon)
+                    await saveAndQuit(rcon)
             elif not test_mode:
                 logger.info("Saving world and quit.")
-                saveAndQuit(rcon)
+                await saveAndQuit(rcon)
     except Exception as e:
         logger.error(f"Error during restart: {e}")
 
