@@ -46,8 +46,9 @@ SFTP_PASSWORD = os.getenv("SFTP_PASSWORD", "")
 SFTP_REMOTE_FILE = os.getenv("SFTP_REMOTE_FILE", "")
 LOCAL_SERVER_INI = Path(f"{Path().resolve()}/{Path(SFTP_REMOTE_FILE).name}")
 
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "100"))  # You can adjust this value based on API limits
-RESTART_TIMEOUT = int(os.getenv("RESTART_TIMEOUT", "5"))  # Seconds for warn_and_restart, give server time to save before quit
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))  # You can adjust this value based on API limits
+RESTART_TIMEOUT = int(os.getenv("RESTART_TIMEOUT", 5))  # Seconds before quit, give server time to save
+COUNTDOWN_MINUTES = int(os.getenv("COUNTDOWN_MINUTES", 5))  # Minutes how long the countdown should be
 WARNING_MESSAGE = "[SERVER] Restart in {minutes} minutes due to a mod update!"
 RESTART_MESSAGE = "[SERVER] Server is restarting now due to a mod update! Please disconnect within {seconds}sec or get kicked!"
 
@@ -159,7 +160,6 @@ def kick_all_players(rcon, players: List[str]) -> None:
 async def warn_and_restart(test_mode: bool) -> None:
     """Warn players and restart the server."""
     async def saveAndQuit(rcon):
-        logger.info("Saving world and quit.")
         rcon.command("save")
         await asyncio.sleep(RESTART_TIMEOUT)
         rcon.command("quit")
@@ -168,34 +168,33 @@ async def warn_and_restart(test_mode: bool) -> None:
         # Get connected players and restart without countdown if theres non
         players = get_connected_players(rcon)
         if len(players) == 0 and not test_mode:
-            logger.info("No players online. Saving world and then quit.")
-            rcon.command("save")
-            await asyncio.sleep(RESTART_TIMEOUT)
-            rcon.command("quit")
+            logger.info("No players online. Saving world and quit.")
+            saveAndQuit(rcon)
         else:
             # Countdown warnings
             _playersGone = False
             logger.info("Countdown for Server Restart...")
-            for minutes_left in range(5, 0, -1):
+            for minutes_left in range(COUNTDOWN_MINUTES, 0, -1):
                 send_rcon_message(rcon, WARNING_MESSAGE.format(minutes=minutes_left), test_mode)
                 await asyncio.sleep(60)
                 players = get_connected_players(rcon)
                 if not players:
-                    logger.info("No players left. Saving world and then quit.")
+                    logger.info("No players left. Saving world and quit.")
                     _playersGone = True
                     break
             if not _playersGone:
                 # Send restart message
                 send_rcon_message(rcon, RESTART_MESSAGE.format(seconds=RESTART_TIMEOUT*2), test_mode)
                 if not test_mode:
-                    # Kick players, save world, and quit
                     await asyncio.sleep(RESTART_TIMEOUT*2)
                     players = get_connected_players(rcon)
                     if players:
                         kick_all_players(rcon, players)
                         await asyncio.sleep(2)
+                    logger.info("Saving world and quit.")
                     saveAndQuit(rcon)
             elif not test_mode:
+                logger.info("Saving world and quit.")
                 saveAndQuit(rcon)
     except Exception as e:
         logger.error(f"Error during restart: {e}")
@@ -235,7 +234,7 @@ def read_enabled_mods(server_config: Path) -> (List[str], List[str]):
                 elif line.startswith("WorkshopItems=") and len(line) > len("WorkshopItems="):
                     enabled_workshop_ids = line[len("WorkshopItems="):].split(';')
     except Exception as e:
-        logger.warning(f"Error reading {server_config}: {e}")
+        logger.error(f"Error reading {server_config}: {e}")
     return enabled_mods, enabled_workshop_ids
 
 
@@ -325,7 +324,7 @@ def write_discord_modlist(modInfo: Dict[str, Any], file_path: str):
                 fh.write(f"[{name}](<{url}>)\n")
             fh.write(f"\nTotal Mods: {len(modInfo)}")
     except Exception as e:
-        logger.warning(f"Error while writing {file_path}: {e}")
+        logger.error(f"Error while writing {file_path}: {e}")
 
 
 def write_modInfo_timeUpdated_file(modInfo: Dict[str, Any], file_path: str):
@@ -341,7 +340,7 @@ def write_modInfo_timeUpdated_file(modInfo: Dict[str, Any], file_path: str):
         with open(file_path, 'w', encoding='utf-8') as fh:
             json.dump(data, fh, ensure_ascii=True, indent=4)
     except Exception as e:
-        logger.warning(f"Error while writing {file_path}: {e}")
+        logger.error(f"Error while writing {file_path}: {e}")
 
 
 async def are_mods_outdated(modInfo: Dict[str, Any], local_file: Path) -> bool:
@@ -350,7 +349,7 @@ async def are_mods_outdated(modInfo: Dict[str, Any], local_file: Path) -> bool:
         with open(local_file, 'r', encoding='utf-8') as fh:
             json_data = json.load(fh)
     except Exception as e:
-        logger.warning(f"Error reading {local_file}: {e}")
+        logger.error(f"Error reading {local_file}: {e}")
         return False
     outdated: List[str] = []
     for mod_id, item in modInfo.items():
