@@ -3,7 +3,7 @@
 This script is to keep track of the mods installed on a remote server and to restart the server when needed.<br/>
 There are some mods that supposedly do this, but they destroyed our savegames.
 
-# Concept:
+# How it works:
 
 When starting for the first time:
 - servertest.ini gets downloaded via sFTP
@@ -12,16 +12,19 @@ When starting for the first time:
 - generating copy&paste list for Discord in a file
 
 Regular execution:
-- Retrieve current workshop data for each mod via Steam API
+- Retrieve for each mod actual `time_updated` via Steam API
 - Compare `time_updated` with the local file
-- If current `time_updated` from workshop is newer:
-  - Send 5min countdown via rcon that the server needs to be restarted
-  - If players are still online after 5 minutes, they get kicked.
-  - After countdown has expired, first send ‘save’ and then, with a delay (so that the server has enough time to save), send ‘quit’ approx. `RESTART_TIMEOUT` seconds later.
+- If current `time_updated` from Steam API is newer:
+  - Send countdown via rcon that the server needs to be restarted.
+  - If players are still online after countdown, they get kicked.
+  - If they left earlier the server gets restart immediately.
+  - To restart the server: first send ‘save’ and then, with a delay (so that the server has enough time to save), send ‘quit’ approx. `RESTART_TIMEOUT` seconds later.
   - If no players are online, it is restarted immediately.
 
 This naturally requires that the game server restarts the PZ server independently. This is the case with [AMP](https://cubecoders.com/AMP), at least.<br/>
-Everything gets logged and most files gets saved to /tmp/ (usual a ram-disk)
+Everything gets logged and most files gets saved to /tmp/ (usual a ram-disk).<br>
+
+For example, you can set `COUNTDOWN_MINUTES` to 20 so that all players have enough time to reach a safe place. If all players have left before the countdown expires, the server will restart immediately, as it checks the status after every minute of the countdown.
 
 # Requirements
 Requires Python >=3.10
